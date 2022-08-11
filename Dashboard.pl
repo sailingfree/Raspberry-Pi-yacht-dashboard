@@ -10,10 +10,11 @@ use JSON;
 
 use Scalar::Util qw(looks_like_number);
 
+use Date::Parse;
+
 our $RUNNING = 1;
 sub sighan {
 	$RUNNING = 0; 
-	$fb->cls('ON');
 	print STDOUT "Quitting.\n";
 	exit;
 }
@@ -40,12 +41,16 @@ $fb->box({'x'=>0, 'y'=>0, 'xx'=>$xres, 'yy'=>$yres, 'radius'=>0,'filled'=>1});
 my $path = '/usr/share/fonts/truetype/liberation2';
 my $face = 'LiberationSans-Bold.ttf';
 
+$path = '/usr/share/fonts/truetype/quicksand';
+$face = 'Quicksand-Medium.ttf';
+
 # Create the instruments to display
 my $sog = Numeric->new(0, 0, $xres/3 ,$yres/3,'SOG');
 my $wtrue = Numeric->new($xres/3, 0, $xres/3 ,$yres/3,'Wind Speed (T)');
 my $wangle = Numeric->new(2* $xres/3, 0, $xres/3 ,$yres/3,'Wind Angle (T)');
 my $d = Numeric->new(0, $yres/3, $xres/3 ,$yres/3,'Depth');
 my $hdg = Numeric->new($xres/3, $yres/3, $xres/3 ,$yres/3,'Heading');
+my $dateTimeDisp = Numeric->new(0, 2*$yres/3, 2*$xres/3, $yres/6, 'Date/Time'); 
 
 # Main look to read the signal k source parse the result and display
 # the instruments
@@ -70,11 +75,14 @@ sub signalk_handler {
 		my $windangle = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'angleApparent'}->{'value'};
 		my $speedoverground = $sc->{'vessels'}->{$urn}->{'navigation'}->{'speedOverGround'}->{'value'};
 		my $headingTrue = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'value'};
-		$d->updateFloat($depth);
-		$wtrue->updateFloat($wind * 1.943);	## Convert m/s to knots
+		my $dateTime = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'timestamp'};
+		$d->updateFloat($depth, 1);
+		$wtrue->updateFloat($wind, 1.97);	
 		$wangle->updateAngle($windangle);
-		$sog->updateFloat($speedoverground * 1.943);	## Convert m/s to knots
+		$sog->updateFloat($speedoverground, 1.97);	## Convert m/s to knots
 		$hdg->updateAngle($headingTrue);
+		my($ss,$mm,$hh,$day,$month,$year,$zone) = strptime($dateTime);
+		$dateTimeDisp->updateText("$hh:$mm:" . int($ss));
 		sleep(1);
 	} while(1);
 }
@@ -114,7 +122,7 @@ print STDOUT "Done\n";
 		my $h=$self->{'height'};
 		my $bb = $fb->ttf_print({'x'=>0,
 				'y'=>$y + 60,
-				'height'=>32,
+				'height'=>$h/5,
 				'wscale' => 1,
 				'color'=>'00000000',
 				'text'=>$self->{'label'},
@@ -127,20 +135,24 @@ print STDOUT "Done\n";
 		# Now we have the bounding box center the label at the 
 		# top of the box
 		# and set the alpha to ff
+		# Fudge the pheight as its a bit too big
+		$bb->{'pheight'} *= 0.8;
 		$bb->{'x'} = $x + ($w /2) - ($bb->{'pwidth'} / 2);
-		$bb->{'y'} = $y + $bb->{'pheight'};
+		$bb->{'y'} = $y + ($bb->{'pheight'});
 		$bb->{'color'} = '000000FF';
+
 
 		my $bb = $fb->ttf_print($bb);
 
 		return $self;
 	}
-
 	sub updateFloat {
 		my $self = shift;
 		my $value = shift;	
+		my $multiplier = shift;
+
 		if(looks_like_number($value)) {
-			$self->update(sprintf("%.2f", $value));
+			$self->update(sprintf("%.2f", $value * $multiplier));
 		} else {
 			$self->update("--.--");
 		}
@@ -154,7 +166,20 @@ print STDOUT "Done\n";
 		} else {
 			$self->update("---");
 		}
+		print STDOUT Dumper($self);
 	}
+
+	sub updateText {
+		my $self = shift;
+		my $value = shift;
+		if(!defined($value) || $value == "") {
+			$self->update('------');
+		} else { 
+			$self->{'lastValue'} = '.';  
+			$self->update($value);
+		}		
+	}
+
 
 	sub update {
 		my $self = shift;
@@ -165,24 +190,28 @@ print STDOUT "Done\n";
 		my $w=$self->{'width'};
 		my $h=$self->{'height'};
 
-		if(!defined($self->{'lastValue'}) || $value != $self->{'lastValue'}) {
+		if($value != $self->{'lastValue'}) {
 			$fb->normal_mode();
 			# Blank the old value using the old bounding box
 			if($oldbb) {
+			$fb->set_color({'red' => 0, 'green' => 128, 'blue' => 128, 'alpha' => 255});
+			# Fudge the pheight as its a bit too big
+			$oldbb->{'pheight'} *= 0.9;
 				$fb->rbox({'x'=>$oldbb->{'x'},
 						'y'=>$oldbb->{'y'} - $oldbb->{'pheight'}, 
 						'width'=>$oldbb->{'pwidth'}, 
 						'height'=>$oldbb->{'pheight'}, 
 						'radius'=>0,
 						'filled'=>1});
+			$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
 			}
 			my $bb = $fb->ttf_print(
 				{'x'=>$x,
 					'y'=>$y + $h,
-					'height'=>74,
-					'wscale' => 1,
+					'height'=>$h/2.5,
+					'wscale' => 1.0,
 					'color'=>'00000000',
-					'text'=>$value . ' ',
+					'text'=>$value,
 					'font_path'=>$path,
 					'face'=>$face,
 					'bounding_box' => TRUE,
@@ -195,15 +224,15 @@ print STDOUT "Done\n";
 
 			$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
 
+			# Save the current bb for next time
+			$self->{'oldbb'} = $bb;
+
 			# Print the bounding box with the new width 
 			$bb->{'color'} = '000000FF';
 			$fb->ttf_print($bb);
 
-			# Save the current bb for next time
-			$self->{'oldbb'} = $bb;
-
+			$self->{'lastValue'} = $value;
 		}
-		$self->{'lastValue'} = $value;
 	}
 }
 
