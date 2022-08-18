@@ -1,5 +1,5 @@
 #!/usr/bin/perl
-#
+# Dashboard for raspberry pi and a 7 inch touch screen
 use Graphics::Framebuffer;
 
 use Data::Dumper;
@@ -30,7 +30,7 @@ my $xres = $fb->{'XRES'};
 my $yres = $fb->{'YRES'};
 
 # Create the main background and fill it.§
-##
+#
 $fb->normal_mode();
 $fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
 $fb->box({'x'=>0, 'y'=>0, 'xx'=>$xres, 'yy'=>$yres, 'radius'=>0,'filled'=>1});
@@ -45,19 +45,27 @@ $path = '/usr/share/fonts/truetype/quicksand';
 $face = 'Quicksand-Medium.ttf';
 
 # Create the instruments to display
-my $sog = Numeric->new(0, 0, $xres/3 ,$yres/3,'SOG');
-my $wtrue = Numeric->new($xres/3, 0, $xres/3 ,$yres/3,'Wind Speed (T)');
+my $sog = Numeric->new(0, 0, $xres/3 ,$yres/3,'SOG (kts)');
+my $wtrue = Numeric->new($xres/3, 0, $xres/3 ,$yres/3,'Wind (T kts)');
 my $wangle = Numeric->new(2* $xres/3, 0, $xres/3 ,$yres/3,'Wind Angle (T)');
-my $d = Numeric->new(0, $yres/3, $xres/3 ,$yres/3,'Depth');
+my $d = Numeric->new(0, $yres/3, $xres/3 ,$yres/3,'Depth (m)');
 my $hdg = Numeric->new($xres/3, $yres/3, $xres/3 ,$yres/3,'Heading');
-my $dateTimeDisp = Numeric->new(0, 2*$yres/3, *$xres/3, $yres/6, 'Date/Time'); 
+my $dateTimeDisp = Numeric->new(0, 2*$yres/3, $xres/3, $yres/6, 'Date/Time'); 
+my $temp = Numeric->new(0, 5*$yres/6, $xres/6, $yres/6,'Temp (C)');
+my $press = Numeric->new($xres/6, 5*$yres/6, $xres/6, $yres/6,'Press (Pa)');
 
-my $windy = Dial->new(2*$xres/3, $yres/3, $xres/3, 2*$yres/3, "Windy");
+my $windy = Dial->new(2*$xres/3, $yres/3, $xres/3, 2*$yres/3, "");
+my $houseBatt = Numeric->new(2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V");
+my $engineBatt = Numeric->new(3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V");
+my $net = Numeric->new(2*$xres/6, 5*$yres/6, $xres/3, $yres/6, 'Network');
 
-for(my $x=0;$x<360;$x+=3) {
-	$windy->update($x);
-	sleep(0.5);
-}
+#for(my $x=0;$x<360;$x+=3) {
+#	$windy->update($x);
+#	sleep(0.5);
+#}
+
+# Main look to read the signal k source parse the result and display
+#
 
 # Main look to read the signal k source parse the result and display
 # the instruments
@@ -73,8 +81,10 @@ sub signalk_handler {
 		$Data::Dumper::Indent = 1;
 		my $urn = $sc->{'self'};
 		$urn =~ s/vessels\.//;
-		print STDOUT Dumper($sc);
+		#print STDOUT Dumper($sc);
 
+		my $temperatureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'temperature'}->{'value'};
+		my $pressureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'pressure'}->{'value'};
 		my $depth = $sc->{'vessels'}->{$urn}->{'environment'}->{'depth'}->{'belowTransducer'}->{'value'};
 
 		my $wind = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'speedTrue'}->{'value'};
@@ -82,6 +92,11 @@ sub signalk_handler {
 		my $speedoverground = $sc->{'vessels'}->{$urn}->{'navigation'}->{'speedOverGround'}->{'value'};
 		my $headingTrue = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'value'};
 		my $dateTime = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'timestamp'};
+
+		my $essid = `/usr/sbin/iwconfig 2>&1|grep wlan|sed "s/:/ /" | awk '{print \$5}'`;
+		chomp($essid);
+
+
 		$d->updateFloat($depth, 1);
 		$wtrue->updateFloat($wind, 1.97);	
 		$wangle->updateAngle($windangle);
@@ -90,7 +105,13 @@ sub signalk_handler {
 		my($ss,$mm,$hh,$day,$month,$year,$zone) = strptime($dateTime);
 		$dateTimeDisp->updateText("$hh:$mm:" . int($ss));
 		$windy->update($windangle * 57);
-		sleep(0.5);
+		$temp->update($temperatureOutside);
+		$press->updateFloat($pressureOutside, 0.01);
+		$houseBatt->updateFloat(12.12,1);
+		$engineBatt->updateFloat(13.92,1);
+		$net->update($essid);
+		sleep(1);
+		
 	} while(1);
 }
 signalk_handler();
@@ -115,12 +136,15 @@ print STDOUT "Done\n";
 			'width' => shift,
 			'height' =>shift,
 			'label' => shift,
-			'value' => shift
+			'value' => shift,
+			'lastValue' => ''
 		};
 
 		bless $self, $class;
+
+		# Draw the outline of the box
 		$fb->set_color({'red' => 128, 'green' => 0, 'blue' => 0, 'alpha' => 255});
-		$fb->rbox({'x'=>$self->{'x'}, 'y'=>$self->{'y'}, 'width'=>$self->{'width'}, 'height'=>$self->{'height'}, 'radius'=>4,'filled'=>0,'pixel_size'=>1});
+		$fb->rbox({'x'=>$self->{'x'}, 'y'=>$self->{'y'}, 'width'=>$self->{'width'}, 'height'=>$self->{'height'}, 'radius'=>0,'filled'=>0,'pixel_size'=>2});
 
 		my $x=$self->{'x'};
 		my $y = $self->{'y'};
@@ -172,7 +196,6 @@ print STDOUT "Done\n";
 		} else {
 			$self->update("---");
 		}
-		print STDOUT Dumper($self);
 	}
 
 	sub updateText {
@@ -181,7 +204,7 @@ print STDOUT "Done\n";
 		if(!defined($value) || $value == "") {
 			$self->update('------');
 		} else { 
-			$self->{'lastValue'} = '.';  
+			$self->{'lastValue'} = '';  
 			$self->update($value);
 		}		
 	}
@@ -196,11 +219,12 @@ print STDOUT "Done\n";
 		my $w=$self->{'width'};
 		my $h=$self->{'height'};
 
-		if($value != $self->{'lastValue'}) {
+
+		if($value ne $self->{'lastValue'}) {
 			$fb->normal_mode();
 			# Blank the old value using the old bounding box
 			if($oldbb) {
-				$fb->set_color({'red' => 0, 'green' => 128, 'blue' => 128, 'alpha' => 255});
+				$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
 				# Fudge the pheight as its a bit too big
 				$oldbb->{'pheight'} *= 0.9;
 				$fb->rbox({'x'=>$oldbb->{'x'},
@@ -227,6 +251,7 @@ print STDOUT "Done\n";
 			# Now we've got the bounding box 
 			# Center the text in the middle of the bottom half
 			$bb->{'x'} = $x + ($w / 2) - ($bb->{'pwidth'} /2 );
+			$bb->{'y'} -= 2;  # Adjust to it misses the boundary
 
 			$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
 
@@ -258,8 +283,6 @@ print STDOUT "Done\n";
 		my $y = shift;
 		my $w = shift;
 		my $h = shift;
-		print STDOUT Dumper($self);
-		print STDOUT "$x $y $w $h\n";
 		my @mem;
 		my $idx = 0;
 
@@ -456,7 +479,6 @@ print STDOUT "Done\n";
 	}
 
 
-	# Draw the pointer at the angle supplied.
 	# Draw the pointer at the angle supplied.
 	sub update {
 		my $self = shift;
