@@ -1,0 +1,14 @@
+[Unit]
+Description=Run the dashboard as the last command to take over the framebuffer
+After=multi-user.target
+
+[Service]
+ExecStart=/home/pete/Raspberry-Pi-yacht-dashboard/Dashboard.pl
+Restart=always
+StandardOutput=syslog
+StandardError=syslog
+WorkingDirectory=/home/pete/
+User=pete
+
+[Install]
+WantedBy=dashboard.target
