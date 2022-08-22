@@ -28,11 +28,16 @@ $SIG{'TERM'} = \&sighan;
 
 my $xres = $fb->{'XRES'};
 my $yres = $fb->{'YRES'};
+my @background = {'red' => 160, 'green' => 160, 'blue' => 160, 'alpha' => 255};
+my @black = {'red' => 0, 'green' => 0, 'blue' => 0, 'alpha' => 255};
+my @box_color = {'red' => 255, 'green' => 0, 'blue' => 0, 'alpha' => 255};
+my @gauge_color = {'red' => 200, 'green' => 200, 'blue' => 200, 'alpha' => 255};
+
 
 # Create the main background and fill it.§
 #
 $fb->normal_mode();
-$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
+$fb->set_color(@background);
 $fb->box({'x'=>0, 'y'=>0, 'xx'=>$xres, 'yy'=>$yres, 'radius'=>0,'filled'=>1});
 
 
@@ -46,8 +51,8 @@ $face = 'Quicksand-Medium.ttf';
 
 # Create the instruments to display
 my $sog = Numeric->new(0, 0, $xres/3 ,$yres/3,'SOG (kts)');
-my $wtrue = Numeric->new($xres/3, 0, $xres/3 ,$yres/3,'Wind (T kts)');
-my $wangle = Numeric->new(2* $xres/3, 0, $xres/3 ,$yres/3,'Wind Angle (T)');
+my $wspeed = Numeric->new($xres/3, 0, $xres/3 ,$yres/3,'Wind (A kts)');
+my $wangle = Numeric->new(2* $xres/3, 0, $xres/3 ,$yres/3,'Wind Angle (A)');
 my $d = Numeric->new(0, $yres/3, $xres/3 ,$yres/3,'Depth (m)');
 my $hdg = Numeric->new($xres/3, $yres/3, $xres/3 ,$yres/3,'Heading');
 my $dateTimeDisp = Numeric->new(0, 2*$yres/3, $xres/3, $yres/6, 'Date/Time'); 
@@ -81,13 +86,13 @@ sub signalk_handler {
 		$Data::Dumper::Indent = 1;
 		my $urn = $sc->{'self'};
 		$urn =~ s/vessels\.//;
-		#print STDOUT Dumper($sc);
+#		print STDOUT Dumper($sc);
 
 		my $temperatureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'temperature'}->{'value'};
 		my $pressureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'pressure'}->{'value'};
 		my $depth = $sc->{'vessels'}->{$urn}->{'environment'}->{'depth'}->{'belowTransducer'}->{'value'};
 
-		my $wind = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'speedTrue'}->{'value'};
+		my $wind = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'speedApparent'}->{'value'};
 		my $windangle = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'angleApparent'}->{'value'};
 		my $speedoverground = $sc->{'vessels'}->{$urn}->{'navigation'}->{'speedOverGround'}->{'value'};
 		my $headingTrue = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'value'};
@@ -98,13 +103,13 @@ sub signalk_handler {
 
 
 		$d->updateFloat($depth, 1);
-		$wtrue->updateFloat($wind, 1.97);	
+		$wspeed->updateFloat($wind, 1.97);	
 		$wangle->updateAngle($windangle);
 		$sog->updateFloat($speedoverground, 1.97);	## Convert m/s to knots
 		$hdg->updateAngle($headingTrue);
 		my($ss,$mm,$hh,$day,$month,$year,$zone) = strptime($dateTime);
 		$dateTimeDisp->updateText("$hh:$mm:" . int($ss));
-		$windy->update($windangle * 57);
+		$windy->update($windangle * 57.29);
 		$temp->update($temperatureOutside);
 		$press->updateFloat($pressureOutside, 0.01);
 		$houseBatt->updateFloat(12.12,1);
@@ -137,13 +142,15 @@ print STDOUT "Done\n";
 			'height' =>shift,
 			'label' => shift,
 			'value' => shift,
-			'lastValue' => ''
+			'lastValue' => '',
+			'decimals' => 1, 
+			'filter' => 4
 		};
 
 		bless $self, $class;
 
 		# Draw the outline of the box
-		$fb->set_color({'red' => 128, 'green' => 0, 'blue' => 0, 'alpha' => 255});
+		$fb->set_color(@box_color);
 		$fb->rbox({'x'=>$self->{'x'}, 'y'=>$self->{'y'}, 'width'=>$self->{'width'}, 'height'=>$self->{'height'}, 'radius'=>0,'filled'=>0,'pixel_size'=>2});
 
 		my $x=$self->{'x'};
@@ -182,7 +189,13 @@ print STDOUT "Done\n";
 		my $multiplier = shift;
 
 		if(looks_like_number($value)) {
-			$self->update(sprintf("%.2f", $value * $multiplier));
+			$decimals = $self->{'decimals'};
+			$fmt = "%." . $decimals . "f";
+			# Low pass filter to smooth the values out over time
+			$filter = $self->{'filter'};
+			$fvalue = (($self->{'value'} * ($filter - 1) ) + $value) /$filter ;
+			$self->{'value'} = $fvalue;
+			$self->update(sprintf($fmt, $fvalue * $multiplier));
 		} else {
 			$self->update("--.--");
 		}
@@ -192,7 +205,7 @@ print STDOUT "Done\n";
 		my $self = shift;
 		my $value = shift;
 		if(looks_like_number($value)) {
-			$self->update(int($value * 57.52) . ' ');
+			$self->update(int($value * 57.29) . ' ');
 		} else {
 			$self->update("---");
 		}
@@ -224,7 +237,7 @@ print STDOUT "Done\n";
 			$fb->normal_mode();
 			# Blank the old value using the old bounding box
 			if($oldbb) {
-				$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
+				$fb->set_color(@background);
 				# Fudge the pheight as its a bit too big
 				$oldbb->{'pheight'} *= 0.9;
 				$fb->rbox({'x'=>$oldbb->{'x'},
@@ -233,7 +246,7 @@ print STDOUT "Done\n";
 						'height'=>$oldbb->{'pheight'}, 
 						'radius'=>0,
 						'filled'=>1});
-				$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
+				$fb->set_color(@background);
 			}
 			my $bb = $fb->ttf_print(
 				{'x'=>$x,
@@ -253,7 +266,7 @@ print STDOUT "Done\n";
 			$bb->{'x'} = $x + ($w / 2) - ($bb->{'pwidth'} /2 );
 			$bb->{'y'} -= 2;  # Adjust to it misses the boundary
 
-			$fb->set_color({'red' => 128, 'green' => 128, 'blue' => 128, 'alpha' => 255});
+			$fb->set_color(@background);
 
 			# Save the current bb for next time
 			$self->{'oldbb'} = $bb;
@@ -330,7 +343,7 @@ print STDOUT "Done\n";
 		};
 
 		bless $self, $class;
-		$fb->set_color({'red' => 128, 'green' => 0, 'blue' => 0, 'alpha' => 255});
+		$fb->set_color(@bax_color);
 		$fb->rbox({'x'=>$self->{'x'}, 'y'=>$self->{'y'}, 'width'=>$self->{'width'}, 'height'=>$self->{'height'}, 'radius'=>4,'filled'=>0,'pixel_size'=>1});
 
 		my $x=$self->{'x'};
@@ -371,7 +384,7 @@ print STDOUT "Done\n";
 			my $h=$self->{'height'};
 			my $centrex = $x + ($w/2);
 			my $centrey = $y + ($h/2);
-			$fb->set_color({'red' => 0, 'green' => 0, 'blue' => 0, 'alpha' => 255});
+			$fb->set_color(@black);
 			my $length = 15;
 			my $angle = deg2rad($major);
 			my $x = $centrex + (sin($angle) * ($radius - $length));
@@ -396,7 +409,7 @@ print STDOUT "Done\n";
 			my $h=$self->{'height'};
 			my $centrex = $x + ($w/2);
 			my $centrey = $y + ($h/2);
-			$fb->set_color({'red' => 0, 'green' => 0, 'blue' => 0, 'alpha' => 255});
+			$fb->set_color(@black);
 			my $radius = min($w*0.8, $h*0.9) / 2;
 			for(my $major = 0; $major < 36; $major ++) {
 				my $length = 10;
@@ -417,7 +430,7 @@ print STDOUT "Done\n";
 			my $h=$self->{'height'};
 			my $centrex = $x + ($w/2);
 			my $centrey = $y + ($h/2);
-			$fb->set_color({'red' => 0, 'green' => 0, 'blue' => 0, 'alpha' => 255});
+			$fb->set_color(@black);
 			my $radius = min($w*0.8, $h*0.9) / 2;
 		for(my $major = 0; $major < 12; $major ++) {
 			my $inset = 30;
@@ -453,7 +466,7 @@ print STDOUT "Done\n";
 		}
 		}
 
-		#Draw the guage
+		#Draw the gauge
 		#
 
 		#
@@ -462,9 +475,10 @@ print STDOUT "Done\n";
 		my $centrey = $y + ($h/2);
 		my $radius = min($w*0.8, $h*0.9) / 2;
 
-		$fb->set_color({'red' => 255, 'green' => 255, 'blue' => 255, 'alpha' => 255});
+		$fb->set_color(@gauge_color);
 		$fb->circle({'x'=>$centrex, 'y'=>$centrey, 'radius'=>$radius, 'filled'=>1});
-		$fb->set_color({'red' => 0, 'green' => 0, 'blue' => 0, 'alpha' => 255});
+		$fb->set_color(@black);
+		$fb->circle({'x'=>$centrex, 'y'=>$centrey, 'radius'=>$radius, 'filled'=>0});
 
 		$self->drawMajors();
 		$self->drawMinors();
@@ -495,9 +509,6 @@ print STDOUT "Done\n";
 
 		if($value != $self->{'oldvalue'}) {
 
-			# Draw the centre circle
-			$fb->set_color({'red' => 0, 'green' => 0, 'blue' => 128, 'alpha' => 255});
-			$fb->circle({'x'=>$centrex, 'y'=>$centrey, 'radius'=>$insideradius, 'filled'=>1});
 			my $length = 15;
 			my $angle = deg2rad($value);
 			my $x = $centrex;
@@ -507,11 +518,14 @@ print STDOUT "Done\n";
 			if($self->{'oldxx'} && $self->{'oldyy'}) {
 				$xx = $self->{'oldxx'};
 				$yy = $self->{'oldyy'};
-				$fb->set_color({'red' => 255, 'green' => 255, 'blue' => 255, 'alpha' => 255});
+				$fb->set_color(@gauge_color);
 				$fb->line({'x'=>$x, 'y'=>$y, 'xx'=>$self->{'oldxx'}, 'yy'=>$self->{'oldyy'}, 'pixel_size'=>3});
-				$fb->set_color({'red' => 0, 'green' => 0, 'blue' => 128, 'alpha' => 255});
+				$fb->set_color(@black);
 			}
 
+			# Draw the centre circle
+			$fb->set_color(@black);
+			$fb->circle({'x'=>$centrex, 'y'=>$centrey, 'radius'=>$insideradius, 'filled'=>1});
 
 			# save the area under the new needle and paint the new needle.
 			my $xx = $centrex + (sin($angle) * ($radius - 1));
