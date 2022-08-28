@@ -12,13 +12,14 @@ use Scalar::Util qw(looks_like_number);
 
 use Date::Parse;
 
+use RRDTool::OO;
+
 our $RUNNING = 1;
 sub sighan {
 	$RUNNING = 0; 
 	print STDOUT "Quitting.\n";
 	exit;
 }
-
 our $fb = Graphics::Framebuffer->new('SPLASH'=>0,'SHOW_ERRORS'=>1, 'ACCELERATED'=>1, 'RESET'=>0);
 #$fb->cls('OFF'); # Clear screen and turn off the console cursor
 $SIG{'QUIT'} = \&sighan;
@@ -36,10 +37,12 @@ my @gauge_color = {'red' => 200, 'green' => 200, 'blue' => 200, 'alpha' => 255};
 
 # Create the main background and fill it.§
 #
-$fb->normal_mode();
-$fb->set_color(@background);
-$fb->box({'x'=>0, 'y'=>0, 'xx'=>$xres, 'yy'=>$yres, 'radius'=>0,'filled'=>1});
-
+#
+sub drawBackground {
+	$fb->normal_mode();
+	$fb->set_color(@background);
+	$fb->box({'x'=>0, 'y'=>0, 'xx'=>$xres, 'yy'=>$yres, 'radius'=>0,'filled'=>1});
+}
 
 
 # Paths for the font we want.
@@ -49,35 +52,37 @@ my $face = 'LiberationSans-Bold.ttf';
 $path = '/usr/share/fonts/truetype/quicksand';
 $face = 'Quicksand-Medium.ttf';
 
+my $sog,$wspeed, $wangle, $d, $hdg, $dateTimeDisp, $temp, $press, $windy, $houseBatt, $engineBat, $net;
+
+
+sub createInstruments {
+	$sog = Numeric->new('SOG', 0, 0, $xres/3 ,$yres/3,'SOG (kts)');
+	$wspeed = Numeric->new('TWS', $xres/3, 0, $xres/3 ,$yres/3,'Wind (A kts)');
+	$wangle = Numeric->new('TWA', 2* $xres/3, 0, $xres/3 ,$yres/3,'Wind Angle (A)');
+	$d = Numeric->new('DPT', 0, $yres/3, $xres/3 ,$yres/3,'Depth (m)');
+	$hdg = Numeric->new('HDG', $xres/3, $yres/3, $xres/3 ,$yres/3,'Heading');
+	$dateTimeDisp = Numeric->new('DATE', 0, 2*$yres/3, $xres/3, $yres/6, 'Date/Time'); 
+	$temp = Numeric->new('TMP', 0, 5*$yres/6, $xres/6, $yres/6,'Temp (C)');
+	$press = Numeric->new('PRESS', $xres/6, 5*$yres/6, $xres/6, $yres/6,'Press (Pa)');
+
+	$windy = Dial->new(2*$xres/3, $yres/3, $xres/3, 2*$yres/3, "");
+	$houseBatt = Numeric->new('BAT1', 2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V");
+	$engineBatt = Numeric->new('BAT2', 3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V");
+	$net = Numeric->new('NET', 2*$xres/6, 5*$yres/6, $xres/3, $yres/6, 'Network');
+}
 # Create the instruments to display
-my $sog = Numeric->new(0, 0, $xres/3 ,$yres/3,'SOG (kts)');
-my $wspeed = Numeric->new($xres/3, 0, $xres/3 ,$yres/3,'Wind (A kts)');
-my $wangle = Numeric->new(2* $xres/3, 0, $xres/3 ,$yres/3,'Wind Angle (A)');
-my $d = Numeric->new(0, $yres/3, $xres/3 ,$yres/3,'Depth (m)');
-my $hdg = Numeric->new($xres/3, $yres/3, $xres/3 ,$yres/3,'Heading');
-my $dateTimeDisp = Numeric->new(0, 2*$yres/3, $xres/3, $yres/6, 'Date/Time'); 
-my $temp = Numeric->new(0, 5*$yres/6, $xres/6, $yres/6,'Temp (C)');
-my $press = Numeric->new($xres/6, 5*$yres/6, $xres/6, $yres/6,'Press (Pa)');
-
-my $windy = Dial->new(2*$xres/3, $yres/3, $xres/3, 2*$yres/3, "");
-my $houseBatt = Numeric->new(2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V");
-my $engineBatt = Numeric->new(3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V");
-my $net = Numeric->new(2*$xres/6, 5*$yres/6, $xres/3, $yres/6, 'Network');
-
-#for(my $x=0;$x<360;$x+=3) {
-#	$windy->update($x);
-#	sleep(0.5);
-#}
+drawBackground();
+createInstruments();
 
 # Main look to read the signal k source parse the result and display
 #
 
-# Main look to read the signal k source parse the result and display
+# Main loop to read the signal k source parse the result and display
 # the instruments
 sub signalk_handler {
 	do {
 		my $ua = LWP::UserAgent->new;
-		my $url = 'http://localhost:443/signalk/v1/api/';
+		my $url = 'http://localhost:3000/signalk/v1/api/';
 		my $req = HTTP::Request->new(GET=>$url);
 		$req->header('content-type'=>'application/json');
 		my $resp = $ua->request($req);
@@ -100,8 +105,6 @@ sub signalk_handler {
 
 		my $essid = `/usr/sbin/iwconfig 2>&1|grep wlan|sed "s/:/ /" | awk '{print \$5}'`;
 		chomp($essid);
-
-
 		$d->updateFloat($depth, 1);
 		$wspeed->updateFloat($wind, 1.97);	
 		$wangle->updateAngle($windangle);
@@ -116,7 +119,21 @@ sub signalk_handler {
 		$engineBatt->updateFloat(13.92,1);
 		$net->update($essid);
 		sleep(1);
-		
+
+		# Load the image
+		#my $img = $fb->load_image({'file'=>"rrd/DPT.png", 
+		#		'center'=>CENTER_XY});
+
+		# Copy the area to be drawn over
+		#$old = $fb->blit_read({'x'=>$img->{'x'}, 
+		#		'y'=>$img->{'y'},
+		#		'width'=>$img->{'width'}, 
+		#		'height'=>$img->{'height'}});
+##
+		#$fb->blit_write($img);
+		#sleep(1);
+		#$fb->blit_write($old);
+
 	} while(1);
 }
 signalk_handler();
@@ -136,6 +153,7 @@ print STDOUT "Done\n";
 		my $class = shift;
 		my $x;
 		my $self = {
+			'name' => shift,
 			'x' => shift,
 			'y' => shift,
 			'width' => shift,
@@ -181,6 +199,23 @@ print STDOUT "Done\n";
 
 		my $bb = $fb->ttf_print($bb);
 
+		mkdir 'rrd';
+		my $rrd = RRDTool::OO->new(
+			file => 'rrd/' . $self->{'name'} . "_rrd.rrd" );
+
+		# Create a round-robin database
+		my $rows = 5;    # 
+		$rrd->create(
+			step        => 10,  # intervals
+			data_source => { name => $self->{'name'} . "_data",
+			type      => "GAUGE",
+	       		min =>0	},
+			archive     => { rows      => 60 });
+
+		$self->{'rrd'} = $rrd;
+
+		$self->{'lastrrd'} = time;
+
 		return $self;
 	}
 	sub updateFloat {
@@ -196,6 +231,7 @@ print STDOUT "Done\n";
 			$fvalue = (($self->{'value'} * ($filter - 1) ) + $value) /$filter ;
 			$self->{'value'} = $fvalue;
 			$self->update(sprintf($fmt, $fvalue * $multiplier));
+			$self->updateRRD($value * $multiplier);
 		} else {
 			$self->update("--.--");
 		}
@@ -206,6 +242,7 @@ print STDOUT "Done\n";
 		my $value = shift;
 		if(looks_like_number($value)) {
 			$self->update(int($value * 57.29) . ' ');
+			$self->updateRRD(int($value * 57.29));
 		} else {
 			$self->update("---");
 		}
@@ -222,6 +259,33 @@ print STDOUT "Done\n";
 		}		
 	}
 
+	sub updateRRD {
+		my $self = shift;
+		my $value = shift;
+
+		my $rrd = $self->{'rrd'};
+		if(time - $self->{'lastrrd'} >= 10) {
+			$rrd->update($value);
+			$rrd->graph(image => "rrd/" . $self->{'name'} . ".png",
+				vertical_label => $self->{'name'},
+				start => time() - 600,
+				draw => { thickness => 2,
+					type => "line",
+					color => '0000FF',
+					legend => $self->{'label'},
+				},
+			);		
+			$self->{'lastrrd'} = time;
+
+			my $r = $rrd->fetch_start();
+			$rrd->fetch_skip_undef();
+	#		while(my($time,$value) = $rrd->fetch_next()) {
+		#		if(defined $value) {
+			#		print STDOUT "$time: $value\n";
+				#}
+		#	}
+		}
+	}
 
 	sub update {
 		my $self = shift;
@@ -276,6 +340,7 @@ print STDOUT "Done\n";
 			$fb->ttf_print($bb);
 
 			$self->{'lastValue'} = $value;
+
 		}
 	}
 }
@@ -470,7 +535,6 @@ print STDOUT "Done\n";
 		#
 
 		#
-		#
 		my $centrex = $x + ($w/2);
 		my $centrey = $y + ($h/2);
 		my $radius = min($w*0.8, $h*0.9) / 2;
@@ -507,7 +571,7 @@ print STDOUT "Done\n";
 		my $centrey = $self->{'centrey'};
 		my $insideradius = 10;
 
-		if($value != $self->{'oldvalue'}) {
+		if($value ne $self->{'oldvalue'}) {
 
 			my $length = 15;
 			my $angle = deg2rad($value);
