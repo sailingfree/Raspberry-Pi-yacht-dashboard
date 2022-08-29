@@ -1,0 +1,3 @@
+# change ownership to this can be ready by user pete
+# Put in /etc/udev/rules.d/
+KERNEL=="hidraw2", OWNER="pete", GROUP="pete"

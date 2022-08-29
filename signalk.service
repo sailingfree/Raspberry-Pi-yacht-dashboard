@@ -1,0 +1,12 @@
+[Service]
+ExecStart=/home/pete/.signalk/signalk-server
+Restart=always
+StandardOutput=syslog
+StandardError=syslog
+WorkingDirectory=/home/pete/.signalk
+User=pete
+Environment=EXTERNALPORT=443
+Environment=NODE_ENV=production
+Environment=RUN_FROM_SYSTEMD=true
+[Install]
+WantedBy=multi-user.target

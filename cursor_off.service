@@ -1,0 +1,14 @@
+[Unit]
+Description=Disable the framebuffer cursor
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/local/bin/cursor_off.sh
+StandardOutput=syslog
+StandardError=syslog
+WorkingDirectory=/root/
+User=root
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target
