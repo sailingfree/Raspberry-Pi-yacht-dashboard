@@ -19,6 +19,8 @@ use threads::shared;
 
 use Time::HiRes qw(usleep);
 
+use Sys::HostAddr;
+
 
 our $RUNNING = 1;
 sub sighan {
@@ -33,6 +35,8 @@ $SIG{'QUIT'} = \&sighan;
 $SIG{'INT'} = \&sighan;
 $SIG{'HUP'} = \&sighan;
 $SIG{'TERM'} = \&sighan;
+
+my $sysaddr = Sys::HostAddr->new();
 
 my $xres :shared = $fb->{'XRES'};
 my $yres :shared = $fb->{'YRES'};
@@ -58,16 +62,13 @@ my $mouse_lock :shared;
 # This is a thread and runs async to the main code.
 # It uses a shared data structure with a lock 
 sub mouse_handler {
-	print STDOUT "Starting the mouse handler ...\n";
 	my $fbth = Graphics::Framebuffer->new('SPLASH'=>0,'SHOW_ERRORS'=>1, 'ACCELERATED'=>1, 'RESET'=>0);
 	do {
 		open(my $m, '<', '/dev/hidraw2');
 		binmode($m);
 		my $mouse = '';
 		my $len = sysread($m, $mouse, 5);
-		if($len ne 5) {
-			print STDOUT "Only got $len bytes, expected 5\n";
-		} else {
+		if($len eq 5) {
 			my($b, $xl,$xh,$yl,$yh) = unpack('c5', $mouse);
 			if(! ($b & 0x01)) {
 				# Only process button up events to avoid double counting
@@ -75,7 +76,6 @@ sub mouse_handler {
 				my $y = $yl + (256 * $yh);
 				$x = $x * 800 / 8192;
 				$y = $y * 480 / 8192;
-				printf STDOUT "B 0x%X  X %d Y %d\n", $b, $x, $y;
 				lock($mouse_lock); 
 				{
 					if(!$mouse_data{'move'}) {
@@ -99,8 +99,6 @@ sub mouse_handler {
 						$fbth->blit_write($mouse_area);
 					}
 				}
-			} else {
-				printf STDOUT "B 0x%X  X %d Y %d\n", $b, $x, $y;
 			}
 		}
 		close $m;
@@ -137,7 +135,7 @@ sub createInstruments {
 	$instruments{'TEMP'} = Numeric->new('TEMP', 0, 5*$yres/6, $xres/6, $yres/6,'Temp (C)');
 	$instruments{'PRESS'} = Numeric->new('PRESS', $xres/6, 5*$yres/6, $xres/6, $yres/6,'Press (Pa)');
 
-	$instruments{'WIND'} = Dial->new(2*$xres/3, $yres/3, $xres/3, 2*$yres/3, "");
+	$instruments{'WIND'} = Dial->new(2*$xres/3, $yres/3, $xres/3, 3*$yres/6, "");
 	$instruments{'BAT1'} = Numeric->new('BAT1', 2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V");
 	$instruments{'BAT2'} = Numeric->new('BAT2', 3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V");
 	$instruments{'NET'} = Numeric->new('NET', 2*$xres/6, 5*$yres/6, $xres/3, $yres/6, 'Network');
@@ -159,39 +157,40 @@ sub signalk_handler {
 	my $req = HTTP::Request->new(GET=>$url);
 	$req->header('content-type'=>'application/json');
 	my $resp = $ua->request($req);
-	my $msg = $resp->decoded_content;
-	my $sc = decode_json($msg);
-	$Data::Dumper::Indent = 1;
-	my $urn = $sc->{'self'};
-	$urn =~ s/vessels\.//;
-	#		print STDOUT Dumper($sc);
+	if($resp->{'_rc'} eq 200) {
+		my $msg = $resp->decoded_content;
+		my $sc = decode_json($msg);
+		$Data::Dumper::Indent = 1;
+		my $urn = $sc->{'self'};
+		$urn =~ s/vessels\.//;
 
-	my $temperatureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'temperature'}->{'value'};
-	my $pressureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'pressure'}->{'value'};
-	my $depth = $sc->{'vessels'}->{$urn}->{'environment'}->{'depth'}->{'belowTransducer'}->{'value'};
+		my $temperatureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'temperature'}->{'value'};
+		my $pressureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'pressure'}->{'value'};
+		my $depth = $sc->{'vessels'}->{$urn}->{'environment'}->{'depth'}->{'belowTransducer'}->{'value'};
 
-	my $wind = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'speedApparent'}->{'value'};
-	my $windangle = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'angleApparent'}->{'value'};
-	my $speedoverground = $sc->{'vessels'}->{$urn}->{'navigation'}->{'speedOverGround'}->{'value'};
-	my $headingTrue = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'value'};
-	my $dateTime = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'timestamp'};
+		my $wind = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'speedApparent'}->{'value'};
+		my $windangle = $sc->{'vessels'}->{$urn}->{'environment'}->{'wind'}->{'angleApparent'}->{'value'};
+		my $speedoverground = $sc->{'vessels'}->{$urn}->{'navigation'}->{'speedOverGround'}->{'value'};
+		my $headingTrue = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'value'};
+		my $dateTime = $sc->{'vessels'}->{$urn}->{'navigation'}->{'headingTrue'}->{'timestamp'};
 
-	my $essid = `/usr/sbin/iwconfig 2>&1|grep wlan|sed "s/:/ /" | awk '{print \$5}'`;
-	chomp($essid);
-	$instruments{'DPT'}->updateFloat($depth, 1);
-	$instruments{'TWS'}->updateFloat($wind, 1.97);	
-	$instruments{'TWA'}->updateAngle($windangle);
-	$instruments{'SOG'}->updateFloat($speedoverground, 1.97);	# Convert m/s to knots
-	$instruments{'HDG'}->updateAngle($headingTrue);
-	my($ss,$mm,$hh,$day,$month,$year,$zone) = strptime($dateTime);
-	$instruments{'DATE'}->updateText("$hh:$mm:" . int($ss));
-	$instruments{'WIND'}->update($windangle * 57.29);
-	$instruments{'TEMP'}->updateFloat($temperatureOutside, 1);
-	$instruments{'PRESS'}->updateFloat($pressureOutside, 0.01);
-	$instruments{'BAT1'}->updateFloat(12.12,1);
+		my $essid = `/usr/sbin/iwconfig 2>&1|grep wlan|sed "s/:/ /" | awk '{print \$5}'`;
+		chomp($essid);
+		my $ipaddr = $sysaddr->main_ip();
+		$instruments{'DPT'}->updateFloat($depth, 1);
+		$instruments{'TWS'}->updateFloat($wind, 1.97);	
+		$instruments{'TWA'}->updateAngle($windangle);
+		$instruments{'SOG'}->updateFloat($speedoverground, 1.97);	# Convert m/s to knots
+		$instruments{'HDG'}->updateAngle($headingTrue);
+		my($ss,$mm,$hh,$day,$month,$year,$zone) = strptime($dateTime);
+		$instruments{'DATE'}->updateText("$hh:$mm:" . int($ss));
+		$instruments{'WIND'}->update($windangle * 57.29);
+		$instruments{'TEMP'}->updateFloat($temperatureOutside, 1);
+		$instruments{'PRESS'}->updateFloat($pressureOutside, 0.01);
+		$instruments{'BAT1'}->updateFloat(12.12,1);
 		$instruments{'BAT2'}->updateFloat(13.92,1);
-		$instruments{'NET'}->update($essid);
-
+		$instruments{'NET'}->update($ipaddr);
+	}
 
 }
 
@@ -227,20 +226,21 @@ do {
 				foreach my $key (keys %instruments) {
 					my $i = %instruments{$key};
 					if($i->inrect($x, $y)) {
-						print STDOUT "Found " . $i->{'name'} . "\n";
-						# Load the image
-						my $img = $fb->load_image({'file'=> $i->image_path(), 
-								'width' => $xres * 0.9,
-								'scale_type' => 'max',
-								'center'=>CENTER_XY});
-						if($img) {
-							# Copy the area to be drawn over
-							$old = $fb->blit_read({'x'=>$img->{'x'}, 
-									'y'=>$img->{'y'},
-									'width'=>$img->{'width'}, 
-									'height'=>$img->{'height'}});
-							#
-							$fb->blit_write($img);
+						# Load the image if it exists
+						if(-e $i->image_path()) {
+							my $img = $fb->load_image({'file'=> $i->image_path(), 
+									'width' => $xres * 0.9,
+									'scale_type' => 'max',
+									'center'=>CENTER_XY});
+							if($img) {
+								# Copy the area to be drawn over
+								$old = $fb->blit_read({'x'=>$img->{'x'}, 
+										'y'=>$img->{'y'},
+										'width'=>$img->{'width'}, 
+										'height'=>$img->{'height'}});
+								#
+								$fb->blit_write($img);
+							}
 						}
 					}
 
@@ -256,9 +256,6 @@ do {
 	}
 	usleep(100 * 1000);
 } while($RUNNING);
-
-print STDOUT "All done\n";
-print STDOUT "Done\n";
 
 
 {
@@ -403,11 +400,6 @@ print STDOUT "Done\n";
 
 			my $r = $rrd->fetch_start();
 			$rrd->fetch_skip_undef();
-	#		while(my($time,$value) = $rrd->fetch_next()) {
-		#		if(defined $value) {
-			#		print STDOUT "$time: $value\n";
-				#}
-		#	}
 		}
 	}
 
