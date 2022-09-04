@@ -41,6 +41,10 @@ my $logdir = "/home/pete/logs/";
 my $logpath = $logdir . "/dash.log";
 my $log;
 
+my ($sec,$min,$hour,$mday,$mon,$year,$wday,$yday,$isdst) = localtime();
+my $datestr = $year + 1900 . "-" . ($mon + 1) . "-" . $mday . "-" . $hour . ":" . $min;;
+
+rename($logpath, $logpath . "-" . $datestr);
 open($log, '>>', $logpath) or die("Could not open $logpath");
 
 my $sysaddr = Sys::HostAddr->new();
