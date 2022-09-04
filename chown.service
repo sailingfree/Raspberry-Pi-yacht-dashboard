@@ -1,0 +1,14 @@
+[Unit]
+Description=Change log ownership
+After=multi-user.target
+
+[Service]
+ExecStart=/usr/bin/chown pete:pete /home/pete/logs
+StandardOutput=syslog
+StandardError=syslog
+WorkingDirectory=/root/
+User=root
+Type=oneshot
+
+[Install]
+WantedBy=multi-user.target
