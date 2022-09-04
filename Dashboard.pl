@@ -21,6 +21,7 @@ use Time::HiRes qw(usleep);
 
 use Sys::HostAddr;
 
+my $debug = 0;
 
 our $RUNNING = 1;
 sub sighan {
@@ -35,6 +36,12 @@ $SIG{'QUIT'} = \&sighan;
 $SIG{'INT'} = \&sighan;
 $SIG{'HUP'} = \&sighan;
 $SIG{'TERM'} = \&sighan;
+
+my $logdir = "/home/pete/logs/";
+my $logpath = $logdir . "/dash.log";
+my $log;
+
+open($log, '>>', $logpath) or die("Could not open $logpath");
 
 my $sysaddr = Sys::HostAddr->new();
 
@@ -138,7 +145,10 @@ sub createInstruments {
 	$instruments{'WIND'} = Dial->new(2*$xres/3, $yres/3, $xres/3, 3*$yres/6, "");
 	$instruments{'BAT1'} = Numeric->new('BAT1', 2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V");
 	$instruments{'BAT2'} = Numeric->new('BAT2', 3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V");
-	$instruments{'NET'} = Numeric->new('NET', 2*$xres/6, 5*$yres/6, $xres/3, $yres/6, 'Network');
+	$instruments{'NET'} = Numeric->new('NET', 2*$xres/6, 5*$yres/6, $xres/3, $yres/12, 'Network');
+	$instruments{'LON'} = Numeric->new('LON', 5*$xres/6, 5*$yres/6, $xres/6, $yres/6, 'Lon');
+	$instruments{'LON'}->{'decimals'} = 3;
+	$instruments{'LAT'} = Numeric->new('LAT', 4*$xres/6, 5*$yres/6, $xres/6, $yres/6, 'Lat');
 }
 # Create the instruments to display
 drawBackground();
@@ -164,6 +174,9 @@ sub signalk_handler {
 		my $urn = $sc->{'self'};
 		$urn =~ s/vessels\.//;
 
+		if($debug) {
+			print STDOUT Dumper($sc);
+		}
 		my $temperatureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'temperature'}->{'value'};
 		my $pressureOutside = $sc->{'vessels'}->{$urn}->{'environment'}->{'outside'}->{'pressure'}->{'value'};
 		my $depth = $sc->{'vessels'}->{$urn}->{'environment'}->{'depth'}->{'belowTransducer'}->{'value'};
@@ -177,6 +190,9 @@ sub signalk_handler {
 		my $essid = `/usr/sbin/iwconfig 2>&1|grep wlan|sed "s/:/ /" | awk '{print \$5}'`;
 		chomp($essid);
 		my $ipaddr = $sysaddr->main_ip();
+		my $lon = $sc->{'vessels'}->{$urn}->{'navigation'}->{'position'}->{'value'}->{'longitude'};
+		my $lat = $sc->{'vessels'}->{$urn}->{'navigation'}->{'position'}->{'value'}->{'latitude'};
+
 		$instruments{'DPT'}->updateFloat($depth, 1);
 		$instruments{'TWS'}->updateFloat($wind, 1.97);	
 		$instruments{'TWA'}->updateAngle($windangle);
@@ -190,6 +206,8 @@ sub signalk_handler {
 		$instruments{'BAT1'}->updateFloat(12.12,1);
 		$instruments{'BAT2'}->updateFloat(13.92,1);
 		$instruments{'NET'}->update($ipaddr);
+		$instruments{'LON'}->updateFloat($lon, 1);
+		$instruments{'LAT'}->updateFloat($lat, 1);
 	}
 
 }
@@ -411,7 +429,10 @@ do {
 		my $y = $self->{'y'};
 		my $w=$self->{'width'};
 		my $h=$self->{'height'};
+		my $now = time();
 
+		print $log "$now $self->{'name'} $value\n";
+		
 
 		if($value ne $self->{'lastValue'}) {
 			$fb->normal_mode();
