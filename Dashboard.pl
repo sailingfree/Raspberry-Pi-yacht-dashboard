@@ -29,6 +29,12 @@ sub sighan {
 	print STDOUT "Quitting.\n";
 	exit;
 }
+
+#
+#
+#
+#
+#
 our $fb = Graphics::Framebuffer->new('SPLASH'=>0,'SHOW_ERRORS'=>1, 'ACCELERATED'=>1, 'RESET'=>0);
 $fb->graphics_mode();
 #$fb->cls('OFF'); # Clear screen and turn off the console cursor
@@ -36,6 +42,20 @@ $SIG{'QUIT'} = \&sighan;
 $SIG{'INT'} = \&sighan;
 $SIG{'HUP'} = \&sighan;
 $SIG{'TERM'} = \&sighan;
+
+# Wait till we have a network connection to signalk before starting
+my $ns = -1;
+do {
+	$ns = system("curl localhost:3000/signalk");
+	sleep(1);
+	if($? == -1) {
+		print STDOUT "Failed to execute $!\n";
+	} elsif ($? & 127) {
+		print STDOUT "Child dies with signal\n";
+	} else {
+		print STDOUT "Child exited with status $?\n";
+	}
+} while ($ns ne 0);
 
 my $logdir = "/home/pete/logs/";
 my $logpath = $logdir . "/dash.log";
@@ -103,7 +123,7 @@ sub mouse_handler {
 								'width'=>$mouse_radius * 2, 
 								'height'=>$mouse_radius * 2});
 						$fbth->set_color(@mouse_color);
-						$fbth->circle({'x'=>$x, 'y'=>$y, 'radius'=>32,'filled'=>1});
+						$fbth->circle({'x'=>$x, 'y'=>$y, 'radius'=>32,'filled'=>1, 'pixel_size'=>1});
 						usleep(1000 * 200);
 						# Restore the colour and the area just painted
 						$fbth->set_color(@background_color);
@@ -147,12 +167,20 @@ sub createInstruments {
 	$instruments{'PRESS'} = Numeric->new('PRESS', $xres/6, 5*$yres/6, $xres/6, $yres/6,'Press (Pa)');
 
 	$instruments{'WIND'} = Dial->new(2*$xres/3, $yres/3, $xres/3, 3*$yres/6, "");
-	$instruments{'BAT1'} = Numeric->new('BAT1', 2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V");
-	$instruments{'BAT2'} = Numeric->new('BAT2', 3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V");
-	$instruments{'NET'} = Numeric->new('NET', 2*$xres/6, 5*$yres/6, $xres/3, $yres/12, 'Network');
-	$instruments{'LON'} = Numeric->new('LON', 5*$xres/6, 5*$yres/6, $xres/6, $yres/6, 'Lon');
-	$instruments{'LON'}->{'decimals'} = 3;
-	$instruments{'LAT'} = Numeric->new('LAT', 4*$xres/6, 5*$yres/6, $xres/6, $yres/6, 'Lat');
+	$instruments{'BAT1V'} = Numeric->new('BAT1V', 2*$xres/6, 2*$yres/3, $xres/6, $yres/6, "House V", 2, 1);
+	$instruments{'BAT1V'}{'decimals'} = 2;
+	$instruments{'BAT1V'}{'filter'} = 1;
+	$instruments{'BAT1A'} = Numeric->new('BAT1A', 2*$xres/6, 5*$yres/6, $xres/6, $yres/6, "House A", 2, 1);
+	$instruments{'BAT1A'}{'decimals'} = 2;
+	$instruments{'BAT1A'}{'filter'} = 1;
+	$instruments{'BAT2V'} = Numeric->new('BAT2V', 3*$xres/6, 2*$yres/3, $xres/6, $yres/6, "Engine V", 2, 1);
+	$instruments{'BAT2V'}{'decimals'} = 2;
+	$instruments{'BAT2V'}{'filter'} = 1;
+	$instruments{'BAT2A'} = Numeric->new('BAT2A', 3*$xres/6, 5*$yres/6, $xres/6, $yres/6, "Engine A", 2, 1);
+	$instruments{'BAT2A'}{'decimals'} = 2;
+	$instruments{'BAT2A'}{'filter'} = 1;
+	$instruments{'NET'} = Numeric->new('NET', 4*$xres/6, 5*$yres/6, $xres/6, $yres/12, 'Network');
+	$instruments{'SET'} = Link->new('SET', 5*$xres/6, 5*$yres/6, $xres/6, $yres/6, 'System');
 }
 # Create the instruments to display
 drawBackground();
@@ -197,6 +225,12 @@ sub signalk_handler {
 		my $lon = $sc->{'vessels'}->{$urn}->{'navigation'}->{'position'}->{'value'}->{'longitude'};
 		my $lat = $sc->{'vessels'}->{$urn}->{'navigation'}->{'position'}->{'value'}->{'latitude'};
 
+		my $batteries = $sc->{'vessels'}->{$urn}->{'electrical'}->{'batteries'};
+		my $bat1v = $batteries->{'0'}->{'voltage'}->{'value'};
+		my $bat1a = $batteries->{'0'}->{'current'}->{'value'};
+		my $bat2v = $batteries->{'1'}->{'voltage'}->{'value'};
+		my $bat2a = $batteries->{'1'}->{'current'}->{'value'};
+
 		$instruments{'DPT'}->updateFloat($depth, 1);
 		$instruments{'TWS'}->updateFloat($wind, 1.97);	
 		$instruments{'TWA'}->updateAngle($windangle);
@@ -207,11 +241,11 @@ sub signalk_handler {
 		$instruments{'WIND'}->update($windangle * 57.29);
 		$instruments{'TEMP'}->updateFloat($temperatureOutside, 1);
 		$instruments{'PRESS'}->updateFloat($pressureOutside, 0.01);
-		$instruments{'BAT1'}->updateFloat(12.12,1);
-		$instruments{'BAT2'}->updateFloat(13.92,1);
+		$instruments{'BAT1V'}->updateFloat($bat1v,1);
+		$instruments{'BAT1A'}->updateFloat($bat1a,1);
+		$instruments{'BAT2V'}->updateFloat($bat2v,1);
+		$instruments{'BAT2A'}->updateFloat($bat2a,1);
 		$instruments{'NET'}->update($ipaddr);
-		$instruments{'LON'}->updateFloat($lon, 1);
-		$instruments{'LAT'}->updateFloat($lat, 1);
 	}
 
 }
@@ -248,22 +282,7 @@ do {
 				foreach my $key (keys %instruments) {
 					my $i = %instruments{$key};
 					if($i->inrect($x, $y)) {
-						# Load the image if it exists
-						if(-e $i->image_path()) {
-							my $img = $fb->load_image({'file'=> $i->image_path(), 
-									'width' => $xres * 0.9,
-									'scale_type' => 'max',
-									'center'=>CENTER_XY});
-							if($img) {
-								# Copy the area to be drawn over
-								$old = $fb->blit_read({'x'=>$img->{'x'}, 
-										'y'=>$img->{'y'},
-										'width'=>$img->{'width'}, 
-										'height'=>$img->{'height'}});
-								#
-								$fb->blit_write($img);
-							}
-						}
+						$i->onclick();
 					}
 
 				}
@@ -297,9 +316,9 @@ do {
 			'height' =>shift,
 			'label' => shift,
 			'value' => shift,
-			'lastValue' => '',
 			'decimals' => 1, 
-			'filter' => 4
+			'filter' => 4,
+			'lastValue' => '',
 		};
 
 		bless $self, $class;
@@ -356,6 +375,28 @@ do {
 
 		return $self;
 	}
+
+	sub onclick {
+		my $self = shift;
+
+		# Load the image if it exists
+		if(-e $self->image_path()) {
+			my $img = $fb->load_image({'file'=> $self->image_path(), 
+					'width' => $xres * 0.9,
+					'scale_type' => 'max',
+					'center'=>$fb->{'CENTER_XY'}});
+			if($img) {
+				# Copy the area to be drawn over
+				$old = $fb->blit_read({'x'=>$img->{'x'}, 
+						'y'=>$img->{'y'},
+						'width'=>$img->{'width'}, 
+						'height'=>$img->{'height'}});
+				#
+				$fb->blit_write($img);
+			}
+		}
+	}
+
 	sub updateFloat {
 		my $self = shift;
 		my $value = shift;	
@@ -366,7 +407,11 @@ do {
 			$fmt = "%." . $decimals . "f";
 			# Low pass filter to smooth the values out over time
 			$filter = $self->{'filter'};
+			if($filter) {
 			$fvalue = (($self->{'value'} * ($filter - 1) ) + $value) /$filter ;
+		} else {
+			$fvaluse = $value;
+		}
 			$self->{'value'} = $fvalue;
 			$self->update(sprintf($fmt, $fvalue * $multiplier));
 			$self->updateRRD($value * $multiplier);
@@ -500,6 +545,115 @@ do {
 		}
 	}
 }
+
+{
+	package Link;
+
+	use Data::Dumper;
+	use parent -norequire, 'Numeric';
+
+	sub new {
+		my $class = shift;
+		my $x;
+		my $self = {
+			'name' => shift,
+			'x' => shift,
+			'y' => shift,
+			'width' => shift,
+			'height' =>shift,
+			'label' => shift,
+			'value' => shift
+		};
+
+		bless $self, $class;
+		# Draw the outline of the box
+		$fb->set_color(@box_color);
+		$fb->rbox({'x'=>$self->{'x'}, 'y'=>$self->{'y'}, 'width'=>$self->{'width'}, 'height'=>$self->{'height'}, 'radius'=>0,'filled'=>0,'pixel_size'=>2});
+
+		my $x=$self->{'x'};
+		my $y = $self->{'y'};
+		my $w=$self->{'width'};
+		my $h=$self->{'height'};
+		my $bb = $fb->ttf_print({'x'=>0,
+				'y'=>$y + 60,
+				'height'=>$h/5,
+				'wscale' => 1,
+				'color'=>'00000000',
+				'text'=>$self->{'label'},
+				'font_path'=>$path,
+				'face'=>$face,
+				'bb' => TRUE,
+				'center' => CENTER_X,
+				'antialias' => TRUE});
+
+		# Now we have the bounding box center the label at the 
+		# top of the box
+		# and set the alpha to ff
+		# Fudge the pheight as its a bit too big
+		$bb->{'pheight'} *= 0.8;
+		$bb->{'x'} = $x + ($w /2) - ($bb->{'pwidth'} / 2);
+		$bb->{'y'} = $y + ($bb->{'pheight'});
+		$bb->{'color'} = '000000FF';
+
+
+		my $bb = $fb->ttf_print($bb);
+
+		return $self;
+	}
+
+	sub title {
+		my $self = shift;
+		my $txt = shift;
+		my $sep = '-' x 40;
+		my $nl = "\n";
+		return $sep . " $txt " . $sep . $nl;
+	}
+
+	sub onclick {
+		my $self = shift;
+		my @clipbox = {'x'=>20, 'y'=>20, 'width'=> $xres - 40, 'height'=>$yres - 40, 'filled'=>1};
+		$fb->clip_rset(@clipbox);
+
+		$old = $fb->blit_read();
+		$fb->set_color(@black);
+		$fb->rbox(@clipbox);
+		my $text .= $self->title("NETWORK");
+		$text .= qx(/usr/sbin/ifconfig);
+		$text .= $self->title("MEMORY");
+		$text .= qx(free);
+		$text .= $self->title("LOAD");;
+		$text .= qx(uptime);
+		my $r = $fb->ttf_paragraph({'text'=> $text,
+				'x'=>20,
+				'y'=>20,
+				'color'=>'ffffffff',
+				'font_path'=>$path,
+				'face'=>$face,
+				'size'=>9,
+				'justified'=>'left',
+			}
+		);
+		$text = $self->title("SENSORS");;
+		$text .= qx(sensors);
+		$text .= $self->title("STORAGE");
+		$text .= qx(df);
+		$text .= $self->title();
+		$text .= $path;
+		$text .= $face;
+		my $r = $fb->ttf_paragraph({'text'=> $text,
+				'x'=>400,
+				'y'=>20,
+				'color'=>'ffffffff',
+				'font_path'=>$path,
+				'face'=>$face,
+				'size'=>9,
+				'justified'=>'left',
+			}
+		);
+	}
+}
+
+
 
 {
 	package Dial;
